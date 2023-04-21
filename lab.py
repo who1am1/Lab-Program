@@ -4,6 +4,7 @@ import string
 import random
 import sqlite3
 import time
+import re
 
 # хранит информацию, видно сейчас пароль или нет
 visible_password = False
@@ -79,6 +80,172 @@ class BiomaterialWindow(Toplevel):
 
         self.title('Прием биоматериала')
         self.geometry('500x400')
+        frame = Frame(self, padx=20, pady=20)
+        frame.pack()
+
+        Label(
+            frame,
+            text="Код пробирки",
+            font=("Times", "14")
+        ).grid(row=1, column=1)
+
+        self.ecode = Entry(frame, width=20)
+        self.ecode.grid(row=1, column=2, padx=15)
+
+        bbarcode = Button(
+            frame,
+            text='Сгенерировать штрихкод',
+            font=("Times", "10"),
+            command=self.generate_barcode
+        )
+        bbarcode.grid(row=2, column=1, pady=10)
+
+        self.barcode = Canvas(
+            frame,
+            width=300,
+            height=129.65
+        )
+        self.barcode.grid(row=2, column=2, pady=15)
+
+    def generate_barcode(self):
+        # первая цифра в штриходе указывает, по какому шаблону должны идти следующие шесть цифр
+        # другие шесть цифр идут всегда по шаблону 'RRRRRR'
+        barcode_pattern = [
+            'LLLLLLRRRRRR',  # шаблон для первой цифры 0
+            'LLGLGGRRRRRR',  # шаблон для первой цифры 1
+            'LLGGLGRRRRRR',
+            'LLGGGLRRRRRR',
+            'LGLLGGRRRRRR',
+            'LGGLLGRRRRRR',
+            'LGGGLLRRRRRR',
+            'LGLGLGRRRRRR',
+            'LGLGGLRRRRRR',
+            'LGGLGLRRRRRR'  # шаблон для первой цифры 9
+        ]
+
+        # R-коды цифр
+        r_code = [
+            '3b 2w 1b 1w',  # для цифры 0
+            '2b 2w 2b 1w',  # для цифры 1
+            '2b 1w 2b 2w',
+            '1b 4w 1b 1w',
+            '1b 1w 3b 2w',
+            '1b 2w 3b 1w',
+            '1b 1w 1b 4w',
+            '1b 3w 1b 2w',
+            '1b 2w 1b 3w',
+            '3b 1w 1b 2w'  # для цифры 9
+        ]
+        """
+        L-код отличается от R-кода фотографически негативным исполнением
+        (там, где был черный, будет белый и наоборот)
+        Пример:
+        R-code цифры 0: 3b 2w 1b 1w
+        L-code цифры 0: 3w 2b 1w 1b
+        
+        G-код отличается от R-кода зеркальным исполнением
+        (переворачиваем строку)
+        Пример:
+        R-code цифры 0: 3b 2w 1b 1w
+        G-code цифры 0: 1w 1b 2w 3b
+        """
+
+        shtrih_height = 22.85
+        shtrih_height_add = 1.65
+        digit_height = 2.75
+        space_between_digit_n_shtrih = 0.165
+        k_shtrih_width = 0.5
+        zero_shtrih_width = 1.35
+        space_between_shtrih = 0.2
+        free_zone_left = 3.63
+        free_zone_right = 2.31
+
+        k_scale = 5
+        shtrih_x = free_zone_right
+
+        self.barcode.delete('all')
+
+        code = self.ecode.get()
+        current_pattern = ''
+        i = 1
+
+        for digit in code:
+            if i == 1:
+                # Рисуем первый разделяющий знак: 1 черная полоска, 1 белая, 1 черная. Длина каждой - единичная
+                current_pattern = barcode_pattern[int(digit)]
+                self.barcode.create_rectangle(shtrih_x * k_scale, 0, (shtrih_x + k_shtrih_width * 1) * k_scale,
+                                              (shtrih_height + shtrih_height_add) * k_scale, fill='black')
+                shtrih_x = (shtrih_x + k_shtrih_width * 1) * k_scale
+                shtrih_x += k_shtrih_width * k_scale
+                self.barcode.create_rectangle(shtrih_x, 0, shtrih_x + k_shtrih_width * 1 * k_scale,
+                                              (shtrih_height + shtrih_height_add) * k_scale, fill='black')
+                shtrih_x += k_shtrih_width * k_scale
+
+                i += 1
+                continue
+
+            # Определем, какой шаблон используется
+            shtrih_pattern = r_code[int(digit)].split(sep=' ')
+            if current_pattern[i - 2] == 'L':
+                for j in range(4):
+                    if 'b' in shtrih_pattern[j]:
+                        shtrih_pattern[j] = shtrih_pattern[j].replace('b', 'w')
+                        continue
+                    if 'w' in shtrih_pattern[j]:
+                        shtrih_pattern[j] = shtrih_pattern[j].replace('w', 'b')
+            elif current_pattern[i - 2] == 'G':
+                shtrih_pattern.reverse()
+
+            # Рисуем разделяющий серединный знак: 1 белая полоска, 1 черная, 1 белая, 1 черная, 1 белая. Длина каждой - единичная
+            if i == 8:
+                shtrih_x += k_shtrih_width * k_scale
+                self.barcode.create_rectangle(shtrih_x, 0, shtrih_x + k_shtrih_width * 1 * k_scale,
+                                              (shtrih_height + shtrih_height_add) * k_scale, fill='black')
+                shtrih_x += k_shtrih_width * k_scale
+                shtrih_x += k_shtrih_width * k_scale
+                self.barcode.create_rectangle(shtrih_x, 0, shtrih_x + k_shtrih_width * 1 * k_scale,
+                                              (shtrih_height + shtrih_height_add) * k_scale, fill='black')
+                shtrih_x += k_shtrih_width * k_scale
+                shtrih_x += k_shtrih_width * k_scale
+
+
+            # Рисуем каждый штрих. Одна цифра отобржается 2 белыми полосками и 2 черными.
+            for shtrih in shtrih_pattern:
+                if 'w' in shtrih:
+                    shtrih_x += k_shtrih_width * int(shtrih[0]) * k_scale
+                    continue
+                self.barcode.create_rectangle(shtrih_x, 0, shtrih_x + k_shtrih_width * int(shtrih[0]) * k_scale,
+                                              shtrih_height * k_scale, fill='black')
+                shtrih_x += k_shtrih_width * int(shtrih[0]) * k_scale
+
+            # Рисуем последний разделяющий знак: 1 черная полоска, 1 белая, 1 черная. Длина каждой - единичная
+            if i == 13:
+                self.barcode.create_rectangle(shtrih_x, 0, shtrih_x + k_shtrih_width * 1 * k_scale,
+                                              (shtrih_height + shtrih_height_add) * k_scale, fill='black')
+                shtrih_x += k_shtrih_width * k_scale
+                shtrih_x += k_shtrih_width * k_scale
+                self.barcode.create_rectangle(shtrih_x, 0, shtrih_x + k_shtrih_width * 1 * k_scale,
+                                              (shtrih_height + shtrih_height_add) * k_scale, fill='black')
+
+            i += 1
+
+        """
+        for digit in code:
+            if i == 1 or i == 7 or i == 13:
+                self.barcode.create_rectangle(shtrih_x * k_scale, 0, (shtrih_x + k_shtrih_width * int(digit)) * k_scale,
+                                              (shtrih_height + shtrih_height_add) * k_scale, fill='black')
+            else:
+                if int(digit) == 0:
+                    shtrih_x = shtrih_x + k_shtrih_width * int(
+                        digit) + space_between_shtrih * k_scale + zero_shtrih_width
+                    i += 1
+                    continue
+                self.barcode.create_rectangle(shtrih_x * k_scale, 0, (shtrih_x + k_shtrih_width * int(digit)) * k_scale,
+                                              shtrih_height * k_scale, fill='black')
+
+            shtrih_x = shtrih_x + k_shtrih_width * int(digit) + space_between_shtrih * k_scale
+            i += 1
+            """
 
 
 def show_hide_password():
