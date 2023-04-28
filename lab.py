@@ -24,6 +24,7 @@ block_seconds = 10
 try:
     con = sqlite3.connect('lab.db')
     c = con.cursor()
+
     c.execute('''create table if not exists users(
                     login text not null primary key,
                     password text not null,
@@ -32,9 +33,57 @@ try:
                     patronymic text,
                     urole text not null,
                     last_date text not null,
-                    last_time text not null);      
+                    last_time text not null
+                    );      
         ''')
     con.commit()
+
+    c.execute('''create table if not exists insurance_type(
+                    id integer not null primary key,
+                    uname text not null
+                    );      
+        ''')
+    con.commit()
+
+    c.execute('''create table if not exists insurance_company(
+                    id integer not null primary key,
+                    uname text not null,
+                    address text not null,
+                    inn text not null,
+                    rs text not null,
+                    bik text not null
+                    );      
+        ''')
+    con.commit()
+
+    c.execute('''create table if not exists patients(
+                    id integer not null primary key,
+                    surname text not null,
+                    uname text not null,
+                    patronymic text,
+                    birthdate text not null,
+                    passport text not null,
+                    telephone text not null,
+                    email text,
+                    insurance_number text not null,
+                    insurance_type text not null,
+                    insurance_company text not null,
+                    FOREIGN KEY(insurance_type) REFERENCES insurance_type(id),
+                    FOREIGN KEY(insurance_company) REFERENCES insurance_company(id)
+                    );      
+        ''')
+    con.commit()
+
+    c.execute('''create table if not exists services(
+                    id integer not null primary key,
+                    uname text not null,
+                    price integer not null,
+                    lead_time text not null,
+                    mean_deviation text 
+                    );      
+        ''')
+    con.commit()
+
     con.close()
 
 except Exception as ep:
@@ -107,7 +156,52 @@ class BiomaterialWindow(Toplevel):
         )
         self.barcode.grid(row=2, column=2, pady=15)
 
+        Label(
+            frame,
+            text="Пациент",
+            font=("Times", "14")
+        ).grid(row=3, column=1)
+
+        patient_text = StringVar()
+        patient = Entry(
+            frame,
+            textvariable=patient_text,
+            state='readonly',
+            width=30
+        )
+        patient.grid(row=3, column=2)
+
+        Button(
+            frame,
+            text='...',
+            font=("Times", "10"),
+            command=open_patient
+        ).grid(row=3, column=3)
+
     def generate_barcode(self):
+        if len(self.ecode.get()) != 13:
+            messagebox.showerror('Ошибка', 'Неправильный код!')
+            return
+        # Расчет контрольной (тринадццатой) цифры:
+        code = self.ecode.get()
+        even = 0
+        odd = 0
+        for i in range(12):
+            # odd и even поменяны местами в конструкции if-else, т.к. список идет с 0
+            if i % 2 == 0:
+                odd += int(code[i])
+            else:
+                even += int(code[i])
+        res = even * 3 + odd
+        if res % 10 == 0:
+            res = 0
+        else:
+            res = (res // 10 + 1) * 10 - res
+
+        if int(code[12]) != res:
+            messagebox.showerror('Ошибка', f'Неправильная контрольная последняя цифра! Попробуйте цифру {res}')
+            return
+
         # первая цифра в штриходе указывает, по какому шаблону должны идти следующие шесть цифр
         # другие шесть цифр идут всегда по шаблону 'RRRRRR'
         barcode_pattern = [
@@ -165,7 +259,6 @@ class BiomaterialWindow(Toplevel):
 
         self.barcode.delete('all')
 
-        code = self.ecode.get()
         current_pattern = ''
         i = 1
 
@@ -180,6 +273,10 @@ class BiomaterialWindow(Toplevel):
                 self.barcode.create_rectangle(shtrih_x, 0, shtrih_x + k_shtrih_width * 1 * k_scale,
                                               (shtrih_height + shtrih_height_add) * k_scale, fill='black')
                 shtrih_x += k_shtrih_width * k_scale
+
+                self.barcode.create_text(shtrih_x - (k_shtrih_width * 5.5) * k_scale,
+                                         (shtrih_height + space_between_digit_n_shtrih + 2) * k_scale, text=digit,
+                                         font=f'Times {3 * k_scale}')
 
                 i += 1
                 continue
@@ -208,7 +305,6 @@ class BiomaterialWindow(Toplevel):
                 shtrih_x += k_shtrih_width * k_scale
                 shtrih_x += k_shtrih_width * k_scale
 
-
             # Рисуем каждый штрих. Одна цифра отобржается 2 белыми полосками и 2 черными.
             for shtrih in shtrih_pattern:
                 if 'w' in shtrih:
@@ -217,6 +313,10 @@ class BiomaterialWindow(Toplevel):
                 self.barcode.create_rectangle(shtrih_x, 0, shtrih_x + k_shtrih_width * int(shtrih[0]) * k_scale,
                                               shtrih_height * k_scale, fill='black')
                 shtrih_x += k_shtrih_width * int(shtrih[0]) * k_scale
+
+            self.barcode.create_text(shtrih_x - (k_shtrih_width * int(shtrih_pattern[3][0]) + 1) * k_scale,
+                                     (shtrih_height + space_between_digit_n_shtrih + 2) * k_scale, text=digit,
+                                     font=f'Times {3 * k_scale}')
 
             # Рисуем последний разделяющий знак: 1 черная полоска, 1 белая, 1 черная. Длина каждой - единичная
             if i == 13:
@@ -229,24 +329,14 @@ class BiomaterialWindow(Toplevel):
 
             i += 1
 
-        """
-        for digit in code:
-            if i == 1 or i == 7 or i == 13:
-                self.barcode.create_rectangle(shtrih_x * k_scale, 0, (shtrih_x + k_shtrih_width * int(digit)) * k_scale,
-                                              (shtrih_height + shtrih_height_add) * k_scale, fill='black')
-            else:
-                if int(digit) == 0:
-                    shtrih_x = shtrih_x + k_shtrih_width * int(
-                        digit) + space_between_shtrih * k_scale + zero_shtrih_width
-                    i += 1
-                    continue
-                self.barcode.create_rectangle(shtrih_x * k_scale, 0, (shtrih_x + k_shtrih_width * int(digit)) * k_scale,
-                                              shtrih_height * k_scale, fill='black')
+class PatientWindow(Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
 
-            shtrih_x = shtrih_x + k_shtrih_width * int(digit) + space_between_shtrih * k_scale
-            i += 1
-            """
-
+        self.title('Выберите пациента')
+        self.geometry('500x400')
+        frame = Frame(self, padx=20, pady=20)
+        frame.pack()
 
 def show_hide_password():
     global visible_password
@@ -293,6 +383,10 @@ def open_biomaterial():
     biomaterial = BiomaterialWindow(main_menu)
     biomaterial.grab_set()
 
+def open_patient():
+    global patient_info
+    patient_info = PatientWindow(biomaterial)
+    patient_info.grab_set()
 
 def sign_in():
     global failed_login
@@ -331,8 +425,6 @@ def sign_in():
             failed_login = 0
             username = elogin.get()
             open_mainmenu()
-            captcha.update()
-            captcha.postscript(file='file_name.ps')
 
 
 auth = Tk()
