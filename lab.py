@@ -1,5 +1,6 @@
 from tkinter import *
 from tkinter import messagebox
+from tkinter import ttk
 import string
 import random
 import sqlite3
@@ -20,6 +21,9 @@ seconds = 0
 
 # сколько секунд длится блокировка входа
 block_seconds = 10
+
+# id последнего в таблице пациента
+last_patient_id = 0
 
 try:
     con = sqlite3.connect('lab.db')
@@ -51,7 +55,8 @@ try:
                     address text not null,
                     inn text not null,
                     rs text not null,
-                    bik text not null
+                    bik text not null,
+                    UNIQUE(inn)
                     );      
         ''')
     con.commit()
@@ -66,10 +71,11 @@ try:
                     telephone text not null,
                     email text,
                     insurance_number text not null,
-                    insurance_type text not null,
-                    insurance_company text not null,
+                    insurance_type integer not null,
+                    insurance_company integer not null,
                     FOREIGN KEY(insurance_type) REFERENCES insurance_type(id),
-                    FOREIGN KEY(insurance_company) REFERENCES insurance_company(id)
+                    FOREIGN KEY(insurance_company) REFERENCES insurance_company(id),
+                    UNIQUE(passport)
                     );      
         ''')
     con.commit()
@@ -101,7 +107,7 @@ class MainMenu(Tk):
         frame.pack()
         con = sqlite3.connect('lab.db')
         c = con.cursor()
-        c.execute(f"SELECT * FROM 'users' where login ='{username}'")
+        c.execute(f"SELECT * FROM users where login ='{username}'")
         result = c.fetchone()
         con.close()
         lsurname = Label(frame, text=result[2], font=("Times", "10"))
@@ -162,7 +168,8 @@ class BiomaterialWindow(Toplevel):
             font=("Times", "14")
         ).grid(row=3, column=1)
 
-        patient_text = StringVar()
+        global patient_text
+        patient_text = StringVar(frame)
         patient = Entry(
             frame,
             textvariable=patient_text,
@@ -329,6 +336,8 @@ class BiomaterialWindow(Toplevel):
 
             i += 1
 
+
+# Окно выбора пациента (список всех пацинетов)
 class PatientWindow(Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -336,7 +345,277 @@ class PatientWindow(Toplevel):
         self.title('Выберите пациента')
         self.geometry('500x400')
         frame = Frame(self, padx=20, pady=20)
-        frame.pack()
+        frame.pack(side=TOP)
+
+        Button(
+            self,
+            text='Добавить пациента',
+            font=("Times", "10"),
+            command=open_add_patient
+        ).pack(side=LEFT, padx=20)
+
+        Button(
+            self,
+            text='Выбрать',
+            font=("Times", "14"),
+            command=self.select_patient
+        ).pack(side=RIGHT, padx=20)
+
+        # Устанваливаем скроллбары
+        patient_scroll_y = Scrollbar(frame)
+        patient_scroll_y.pack(side=RIGHT, fill=Y)
+
+        patient_scroll_x = Scrollbar(frame, orient='horizontal')
+        patient_scroll_x.pack(side=BOTTOM, fill=X)
+
+        global patient_table
+        patient_table = ttk.Treeview(frame, yscrollcommand=patient_scroll_y.set,
+                                     xscrollcommand=patient_scroll_x.set)
+
+        patient_scroll_x.config(command=patient_table.xview)
+        patient_scroll_y.config(command=patient_table.yview)
+
+        # Описываем таблицу
+        patient_table['columns'] = (
+            'id', 'surname', 'uname', 'patronymic', 'birthdate', 'passport', 'telephone', 'email', 'insurance_number',
+            'insurance_type', 'insurance_company')
+
+        patient_table.column('#0', width=0, stretch=NO)
+        patient_table.column('id', anchor=CENTER, width=80)
+        patient_table.column('surname', anchor=CENTER, width=80)
+        patient_table.column('uname', anchor=CENTER, width=80)
+        patient_table.column('patronymic', anchor=CENTER, width=80)
+        patient_table.column('birthdate', anchor=CENTER, width=80)
+        patient_table.column('passport', anchor=CENTER, width=80)
+        patient_table.column('telephone', anchor=CENTER, width=80)
+        patient_table.column('email', anchor=CENTER, width=80)
+        patient_table.column('insurance_number', anchor=CENTER, width=80)
+        patient_table.column('insurance_type', anchor=CENTER, width=80)
+        patient_table.column('insurance_company', anchor=CENTER, width=80)
+
+        patient_table.heading('#0', text='', anchor=CENTER)
+        patient_table.heading('id', text='ID', anchor=CENTER)
+        patient_table.heading('surname', text='Фамилия', anchor=CENTER)
+        patient_table.heading('uname', text='Имя', anchor=CENTER)
+        patient_table.heading('patronymic', text='Отчество', anchor=CENTER)
+        patient_table.heading('birthdate', text='Дата рождения', anchor=CENTER)
+        patient_table.heading('passport', text='Серия и номер паспорта', anchor=CENTER)
+        patient_table.heading('telephone', text='Телефон', anchor=CENTER)
+        patient_table.heading('email', text='email', anchor=CENTER)
+        patient_table.heading('insurance_number', text='Номер страхового полиса (СП)', anchor=CENTER)
+        patient_table.heading('insurance_type', text='Тип СП', anchor=CENTER)
+        patient_table.heading('insurance_company', text='Название страховой компании', anchor=CENTER)
+
+        patient_table.pack()
+
+        # Загружаем в таблицу на форме данные из базы данных
+        con = sqlite3.connect('lab.db')
+        c = con.cursor()
+        c.execute(f"SELECT * FROM patients")
+        result = c.fetchall()
+        global last_patient_id
+
+        for i in range(len(result)):
+            if i == len(result) - 1:
+                last_patient_id = result[i][0]
+
+            c.execute(f"SELECT uname FROM insurance_type where id ='{result[i][9]}'")
+            insurance_type = c.fetchone()
+
+            c.execute(f"SELECT uname FROM insurance_company where id ='{result[i][10]}'")
+            insurance_company = c.fetchone()
+
+            patient_table.insert(parent='', index='end', iid=str(i), text='',
+                                 values=(result[i][0], result[i][1], result[i][2], result[i][3], result[i][4],
+                                         result[i][5], result[i][6], result[i][7], result[i][8], insurance_type[0],
+                                         insurance_company[0]))
+        con.close()
+
+    def select_patient(self):
+        # индекс выбранной строки в таблице
+        selected = patient_table.focus()
+        # если строка не выбрана
+        if selected == '':
+            messagebox.showerror('Ошибка', 'Выберите строку!')
+            return
+        values = patient_table.item(selected, 'values')
+        global patient_text
+        patient_text.set(f'{values[0]} {values[1]} {values[2]} {values[6]}')
+        patient_info.destroy()
+
+
+class AddPatientWindow(Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.title('Добавить пациента')
+        self.geometry('600x500')
+        frame = Frame(self, padx=20, pady=20)
+        frame.pack(side=TOP)
+
+        Label(
+            frame,
+            text="ID",
+            font=("Times", "12")
+        ).grid(row=1, column=1)
+
+        Label(
+            frame,
+            text="Фамилия",
+            font=("Times", "12")
+        ).grid(row=2, column=1)
+
+        Label(
+            frame,
+            text="Имя",
+            font=("Times", "12")
+        ).grid(row=3, column=1)
+
+        Label(
+            frame,
+            text="Отчество",
+            font=("Times", "12")
+        ).grid(row=4, column=1)
+
+        Label(
+            frame,
+            text="Дата рождения",
+            font=("Times", "12")
+        ).grid(row=5, column=1)
+
+        Label(
+            frame,
+            text="Серия и номер паспорта",
+            font=("Times", "12")
+        ).grid(row=6, column=1)
+
+        Label(
+            frame,
+            text="Телефон",
+            font=("Times", "12")
+        ).grid(row=7, column=1)
+
+        Label(
+            frame,
+            text="email",
+            font=("Times", "12")
+        ).grid(row=8, column=1)
+
+        Label(
+            frame,
+            text="Номер страхового полиса (СП)",
+            font=("Times", "12")
+        ).grid(row=9, column=1)
+
+        Label(
+            frame,
+            text="Тип СП",
+            font=("Times", "12")
+        ).grid(row=10, column=1)
+
+        Label(
+            frame,
+            text="Название страховой компании",
+            font=("Times", "12")
+        ).grid(row=11, column=1)
+
+        text_id = StringVar(frame)
+        self.eid = Entry(frame, font=("Times", "12"), state='readonly', textvariable=text_id)
+        self.eid.grid(row=1, column=2)
+        text_id.set(str(last_patient_id + 1))
+
+        self.esurname = Entry(frame, font=("Times", "12"))
+        self.esurname.grid(row=2, column=2, pady=5)
+
+        self.euname = Entry(frame, font=("Times", "12"))
+        self.euname.grid(row=3, column=2, pady=5)
+
+        self.epatronymic = Entry(frame, font=("Times", "12"))
+        self.epatronymic.grid(row=4, column=2, pady=5)
+
+        self.ebirthdate = Entry(frame, font=("Times", "12"))
+        self.ebirthdate.grid(row=5, column=2, pady=5)
+
+        self.epassport = Entry(frame, font=("Times", "12"))
+        self.epassport.grid(row=6, column=2, pady=5)
+
+        self.etelephone = Entry(frame, font=("Times", "12"))
+        self.etelephone.grid(row=7, column=2, pady=5)
+
+        self.eemail = Entry(frame, font=("Times", "12"))
+        self.eemail.grid(row=8, column=2, pady=5)
+
+        self.einsurance_number = Entry(frame, font=("Times", "12"))
+        self.einsurance_number.grid(row=9, column=2, pady=5)
+
+        # exportselection=0 значит, что при наличии двух и более listbox при выборе значения во втором списке,
+        # значение первого списка не сбросится
+        self.einsurance_type = Listbox(frame, height=2, exportselection=0)
+        self.einsurance_type.grid(row=10, column=2, pady=5)
+
+        con = sqlite3.connect('lab.db')
+        c = con.cursor()
+        c.execute(f"SELECT id, uname FROM insurance_type")
+        result = c.fetchall()
+        for i in range(len(result)):
+            self.einsurance_type.insert(END, f"{result[i][0]} {result[i][1]}")
+
+        self.einsurance_company = Listbox(frame, height=2, exportselection=0)
+        self.einsurance_company.grid(row=11, column=2, pady=5)
+
+        c.execute(f"SELECT id, uname FROM insurance_company")
+        result = c.fetchall()
+        con.close()
+
+        for i in range(len(result)):
+            self.einsurance_company.insert(END, f"{result[i][0]} {result[i][1]}")
+
+        bAdd = Button(
+            frame,
+            text='Добавить',
+            font=("Times", "14"),
+            command=self.add_patient_table
+        )
+        bAdd.grid(row=12, column=2, pady=15)
+
+    def add_patient_table(self):
+        # Проверяем, что все обязательные поля заполнены
+        if self.esurname.get() == '' or self.euname.get() == '' or self.ebirthdate.get() == '' or self.epassport.get() == '' \
+                or self.etelephone.get() == '' or self.einsurance_number.get() == '' \
+                or len(self.einsurance_type.curselection()) == 0 or len(self.einsurance_company.curselection()) == 0:
+            messagebox.showerror('Ошибка', 'Заполните обязательные поля!')
+            return
+
+        # Вставляем данные в базу данных
+        con = sqlite3.connect('lab.db')
+        c = con.cursor()
+        query = 'insert into patients VALUES(?,?,?,?,?,?,?,?,?,?,?)'
+        query_values = (
+            self.eid.get(), self.esurname.get(), self.euname.get(), self.epatronymic.get(), self.ebirthdate.get(),
+            self.epassport.get(), self.etelephone.get(), self.eemail.get(), self.einsurance_number.get(),
+            self.einsurance_type.get(self.einsurance_type.curselection()).split(sep=' ', maxsplit=1)[0],
+            # Используем функцию split, т.к. в спике находится id и название через пробел
+            self.einsurance_company.get(self.einsurance_company.curselection()).split(sep=' ', maxsplit=1)[0])
+        c.execute(query, query_values)
+        con.commit()
+        con.close()
+
+        global last_patient_id
+        last_patient_id += 1
+
+        # Вставляем данные в таблицу на форме
+        global patient_table
+        patient_table.insert(parent='', index='end', iid=len(patient_table.get_children()), text='',
+                             values=(self.eid.get(), self.esurname.get(), self.euname.get(), self.epatronymic.get(),
+                                     self.ebirthdate.get(),
+                                     self.epassport.get(), self.etelephone.get(), self.eemail.get(),
+                                     self.einsurance_number.get(),
+                                     self.einsurance_type.get(self.einsurance_type.curselection()).split(sep=' ',
+                                                                                                         maxsplit=1)[1],
+                                     # Используем функцию split, т.к. в спике находится id и название через пробел
+                                     self.einsurance_company.get(self.einsurance_company.curselection()).split(sep=' ',
+                                                                                                               maxsplit=1)[1]))
+        add_patient.destroy()
 
 def show_hide_password():
     global visible_password
@@ -383,10 +662,18 @@ def open_biomaterial():
     biomaterial = BiomaterialWindow(main_menu)
     biomaterial.grab_set()
 
+
 def open_patient():
     global patient_info
     patient_info = PatientWindow(biomaterial)
     patient_info.grab_set()
+
+
+def open_add_patient():
+    global add_patient
+    add_patient = AddPatientWindow(patient_info)
+    add_patient.grab_set()
+
 
 def sign_in():
     global failed_login
