@@ -5,7 +5,9 @@ import string
 import random
 import sqlite3
 import time
-import re
+import datetime
+import subprocess
+import os
 
 # хранит информацию, видно сейчас пароль или нет
 visible_password = False
@@ -24,6 +26,9 @@ block_seconds = 10
 
 # id последнего в таблице пациента
 last_patient_id = 0
+
+# id последней в таблице услуги
+last_service_id = 0
 
 try:
     con = sqlite3.connect('lab.db')
@@ -90,6 +95,26 @@ try:
         ''')
     con.commit()
 
+    c.execute('''create table if not exists orders(
+                        id text not null primary key,
+                        creation_date text not null,
+                        patient integer not null,
+                        FOREIGN KEY(patient) REFERENCES patients(id)
+                        );      
+            ''')
+    con.commit()
+
+    c.execute('''create table if not exists services_in_orders(
+                            id integer primary key,
+                            order_number text not null,
+                            service integer not null,
+                            status text not null,
+                            FOREIGN KEY(order_number) REFERENCES orders(id),
+                            FOREIGN KEY(service) REFERENCES services(id)
+                            );      
+                ''')
+    con.commit()
+
     con.close()
 
 except Exception as ep:
@@ -134,7 +159,7 @@ class BiomaterialWindow(Toplevel):
         super().__init__(parent)
 
         self.title('Прием биоматериала')
-        self.geometry('500x400')
+        self.geometry('600x600')
         frame = Frame(self, padx=20, pady=20)
         frame.pack()
 
@@ -184,6 +209,104 @@ class BiomaterialWindow(Toplevel):
             font=("Times", "10"),
             command=open_patient
         ).grid(row=3, column=3)
+
+        Label(
+            frame,
+            text="Услуги",
+            font=("Times", "14")
+        ).grid(row=4, column=1)
+
+        global services_list
+        services_list = Listbox(frame, height=10, exportselection=0, width=40)
+        services_list.grid(row=4, column=2, pady=10)
+
+        Button(
+            frame,
+            text='+',
+            font=("Times", "10"),
+            command=open_service
+        ).grid(row=4, column=3)
+
+        Button(
+            frame,
+            text='Удалить услугу',
+            font=("Times", "10"),
+            command=self.delete_service
+        ).grid(row=5, column=2)
+
+        # Список, содержащий все id выбранных услуг
+        global selected_services
+        selected_services = list()
+
+        Button(
+            frame,
+            text='Сохранить',
+            font=("Times", "20"),
+            command=self.save_data
+        ).grid(row=6, column=1, pady=20)
+
+    def delete_service(self):
+        if len(services_list.curselection()) == 0:
+            messagebox.showerror('Ошибка', 'Выберите услугу для удаления!')
+            return
+
+        # Удаляем из списка выбранных улсуг удаленную услугу
+        selected_services.remove(services_list.get(services_list.curselection()[0]).split(sep=' ', maxsplit=1)[0])
+
+        services_list.delete(services_list.curselection()[0])
+
+    def save_data(self):
+
+        # Проверяем валидность кода пробирки
+        if len(self.ecode.get()) != 13:
+            messagebox.showerror('Ошибка', 'Неправильный код пробирки!')
+            return
+        # Расчет контрольной (тринадццатой) цифры:
+        code = self.ecode.get()
+        even = 0
+        odd = 0
+        for i in range(12):
+            # odd и even поменяны местами в конструкции if-else, т.к. список идет с 0
+            if i % 2 == 0:
+                odd += int(code[i])
+            else:
+                even += int(code[i])
+        res = even * 3 + odd
+        if res % 10 == 0:
+            res = 0
+        else:
+            res = (res // 10 + 1) * 10 - res
+
+        if int(code[12]) != res:
+            messagebox.showerror('Ошибка', f'Неправильная контрольная последняя цифра! Попробуйте цифру {res}')
+            return
+
+        if patient_text.get() == '':
+            messagebox.showerror('Ошибка', 'Выберите пациента!')
+            return
+
+        if len(selected_services) == 0:
+            messagebox.showerror('Ошибка', 'Выберите хотя бы одну услугу!')
+            return
+
+        con = sqlite3.connect('lab.db')
+        c = con.cursor()
+        c.execute('PRAGMA foreign_keys = ON')
+        query = 'insert into orders VALUES(?, ?, ?)'
+        today = datetime.date.today()
+        query_values = (self.ecode.get(), today.strftime('%d.%m.%Y'), patient_text.get().split(sep=' ', maxsplit=1)[0])
+        c.execute(query, query_values)
+        con.commit()
+
+        for i in selected_services:
+            query = 'insert into services_in_orders(order_number, service, status) VALUES(?, ?, ?)'
+            query_values = (self.ecode.get(), i, 'Создана')
+            c.execute(query, query_values)
+            con.commit()
+        con.close()
+        messagebox.showinfo('Успешно', 'Данные сохранены')
+        biomaterial.destroy()
+
 
     def generate_barcode(self):
         if len(self.ecode.get()) != 13:
@@ -614,8 +737,98 @@ class AddPatientWindow(Toplevel):
                                                                                                          maxsplit=1)[1],
                                      # Используем функцию split, т.к. в спике находится id и название через пробел
                                      self.einsurance_company.get(self.einsurance_company.curselection()).split(sep=' ',
-                                                                                                               maxsplit=1)[1]))
+                                                                                                               maxsplit=1)[
+                                         1]))
         add_patient.destroy()
+
+
+class ServiceWindow(Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.title('Выберите услугу')
+        self.geometry('500x400')
+        frame = Frame(self, padx=20, pady=20)
+        frame.pack(side=TOP)
+
+        Button(
+            self,
+            text='Добавить услугу',
+            font=("Times", "10")
+        ).pack(side=LEFT, padx=20)
+
+        Button(
+            self,
+            text='Выбрать',
+            font=("Times", "14"),
+            command=self.select_service
+        ).pack(side=RIGHT, padx=20)
+
+        # Устанваливаем скроллбары
+        service_scroll_y = Scrollbar(frame)
+        service_scroll_y.pack(side=RIGHT, fill=Y)
+
+        service_scroll_x = Scrollbar(frame, orient='horizontal')
+        service_scroll_x.pack(side=BOTTOM, fill=X)
+
+        global service_table
+        service_table = ttk.Treeview(frame, yscrollcommand=service_scroll_y.set,
+                                     xscrollcommand=service_scroll_x.set)
+
+        service_scroll_x.config(command=service_table.xview)
+        service_scroll_y.config(command=service_table.yview)
+
+        # Описываем таблицу
+        service_table['columns'] = ('id', 'uname', 'price', 'lead_time', 'mean_deviation')
+
+        service_table.column('#0', width=0, stretch=NO)
+        service_table.column('id', anchor=CENTER, width=40)
+        service_table.column('uname', anchor=CENTER, width=170)
+        service_table.column('price', anchor=CENTER, width=50)
+        service_table.column('lead_time', anchor=CENTER, width=70)
+        service_table.column('mean_deviation', anchor=CENTER, width=70)
+
+        service_table.heading('#0', text='', anchor=CENTER)
+        service_table.heading('id', text='ID', anchor=CENTER)
+        service_table.heading('uname', text='Название', anchor=CENTER)
+        service_table.heading('price', text='Стоимость', anchor=CENTER)
+        service_table.heading('lead_time', text='Срок выполнения', anchor=CENTER)
+        service_table.heading('mean_deviation', text='Среднее отклонение', anchor=CENTER)
+
+        service_table.pack()
+
+        # Загружаем в таблицу на форме данные из базы данных
+        con = sqlite3.connect('lab.db')
+        c = con.cursor()
+        c.execute(f"SELECT * FROM services")
+        result = c.fetchall()
+        global last_service_id
+
+        for i in range(len(result)):
+            if i == len(result) - 1:
+                last_service_id = result[i][0]
+
+            service_table.insert(parent='', index='end', iid=str(i), text='',
+                                 values=(result[i][0], result[i][1], result[i][2], result[i][3], result[i][4]))
+        con.close()
+
+    def select_service(self):
+        # индекс выбранной строки в таблице
+        selected = service_table.focus()
+        # если строка не выбрана
+        if selected == '':
+            messagebox.showerror('Ошибка', 'Выберите строку!')
+            return
+        values = service_table.item(selected, 'values')
+        global services_list
+        global selected_services
+        if values[0] in selected_services:
+            messagebox.showerror('Ошибка', 'Эта услуга уже добавлена!')
+            return
+        services_list.insert(END, f"{values[0]} {values[1]} {values[2]}руб")
+        selected_services.append(values[0])
+        service_info.destroy()
+
 
 def show_hide_password():
     global visible_password
@@ -673,6 +886,12 @@ def open_add_patient():
     global add_patient
     add_patient = AddPatientWindow(patient_info)
     add_patient.grab_set()
+
+
+def open_service():
+    global service_info
+    service_info = ServiceWindow(biomaterial)
+    service_info.grab_set()
 
 
 def sign_in():
